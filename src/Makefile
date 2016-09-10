@@ -1,0 +1,57 @@
+CFLAGS += -I ../include -I ../
+LIBPREFS = prefs.a
+LIBUTILS = utils.a
+LIBLOGS  = log.a
+
+LOGOBJ   =  fnc_log.o
+LOGSRC   =  fnc_log.c
+
+UTILOBJS =  NTP_time.o\
+            alloc_path_name.o\
+            get_UTC_time.o\
+            random32.o\
+            is_supported_url.o
+
+UTILSRC =   NTP_time.c\
+            alloc_path_name.c\
+            get_UTC_time.c\
+            random32.c\
+            is_supported_url.c    
+                  
+PREFOBJS = prefs_get_hostname.o\
+           prefs_get_log.o\
+           prefs_get_max_session.o\
+           prefs_get_port.o\
+           prefs_get_serv_root.o\
+           prefs_init.o\
+           prefs_use_default.o
+                                    
+PREFSRC = prefs_get_hostname.c\
+          prefs_get_log.c\
+          prefs_get_max_session.c\
+          prefs_get_port.c\
+          prefs_get_serv_root.c\
+          prefs_init.c\
+          prefs_use_default.c
+
+         
+MAINOBJS = main.o fncheader.o 
+
+MAINSRC =  main.c fncheader.c        
+         
+all:$(LIBPREFS) $(LIBUTILS) $(LIBLOGS) $(MAINOBJS)
+
+$(LIBPREFS):$(PREFOBJS) 
+	$(AR) $(AFLAGS) $@ $^
+
+
+$(LIBUTILS):$(UTILOBJS)
+	$(AR) $(AFLAGS) $@ $^	
+	
+$(LIBLOGS):$(LOGOBJ)	
+	$(AR) $(AFLAGS) $@ $^		
+
+.c.o:
+	$(CC) -c $(CFLAGS) $<	-o $@
+clean:
+	rm -f *.o   *.a 

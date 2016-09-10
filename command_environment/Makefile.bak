@@ -1,0 +1,25 @@
+CROSS = arm-uclinux-elf-
+
+CPP = $(CROSS)g++
+CC  = $(CROSS)gcc
+LD  = $(CROSS)ld
+AR  = $(CROSS)ar
+
+CFLAGS = -D_REENTRANT -DLINUX -Wall -O2 -I ../include -I ../
+LFLAGS = -Wl,-elf2flt
+LDFLAGS = -Wl,-elf2flt
+AFLAGS	+= -rcu
+
+LIBCMDENV = cmd_env.a
+OBJS  = command_environment.o
+SOURCE = command_environment.c
+
+all:$(LIBCMDENV)
+
+$(LIBCMDENV):$(OBJS)
+	$(AR) $(AFLAGS) $@ $^
+	
+.c.o:
+	$(CC) -c $(CFLAGS) $<	-o $@
+clean:
+	rm -f *.o *.lo   *.a 

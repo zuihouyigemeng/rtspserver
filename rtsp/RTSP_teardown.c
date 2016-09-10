@@ -1,0 +1,231 @@
+/* * 
+ *  $Id: RTSP_teardown.c 338 2006-04-27 16:45:52Z shawill $
+ *  
+ *  This file is part of Fenice
+ *
+ *  Fenice -- Open Media Server
+ *
+ *  Copyright (C) 2004 by
+ *  	
+ *	- Giampaolo Mancini	<giampaolo.mancini@polito.it>
+ *	- Francesco Varano	<francesco.varano@polito.it>
+ *	- Marco Penno		<marco.penno@polito.it>
+ *	- Federico Ridolfo	<federico.ridolfo@polito.it>
+ *	- Eugenio Menegatti 	<m.eu@libero.it>
+ *	- Stefano Cau
+ *	- Giuliano Emma
+ *	- Stefano Oldrini
+ * 
+ *  Fenice is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  Fenice is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with Fenice; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *  
+ * */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <netinet/in.h>
+
+#include <fenice/rtsp.h>
+#include <fenice/utils.h>
+#include <fenice/prefs.h>
+#include <fenice/schedule.h>
+#include <fenice/bufferpool.h>
+#include <fenice/fnc_log.h>
+
+/*
+****************************************************************
+*TEARDOWN方法处理函数
+****************************************************************
+*/
+
+int RTSP_teardown(RTSP_buffer * rtsp)
+{
+    /*局部变量*/
+    long int session_id;
+    char *p;
+    RTSP_session *s;
+    RTP_session *rtp_curr, *rtp_prev = NULL, *rtp_temp;
+    int valid_url;
+    char object[255], server[255], trash[255], *filename;
+    unsigned short port;
+    char url[255];
+    unsigned int cseq;
+
+    /*检查序列号*/ 
+    if ((p = strstr(rtsp->in_buffer, HDR_CSEQ)) == NULL) 
+    {
+        send_reply(400, 0, rtsp);	/* Bad Request */
+        return ERR_PARSE;
+    } 
+    else
+    {
+        if (sscanf(p, "%254s %d", trash, &(rtsp->rtsp_cseq)) != 2)
+        {
+            send_reply(400, 0, rtsp);  /* Bad Request */
+            return ERR_PARSE;
+        }
+    }    
+    cseq = rtsp->rtsp_cseq;    
+
+    /*分离和解析URL*/
+    if (!sscanf(rtsp->in_buffer, " %*s %254s ", url)) 
+    {
+        send_reply(400, 0, rtsp);   /* bad request */
+        return ERR_PARSE;
+    }
+    
+    /*验证URL是否正确*/
+    switch (parse_url(url, server, sizeof(server), &port, object, sizeof(object)))
+    {
+        case 1:          /*请求错误*/
+            send_reply(400, 0, rtsp);
+            return ERR_PARSE;
+            break;
+            
+        case -1: /*服务器内部错误*/
+            send_reply(500, 0, rtsp);
+            return ERR_PARSE;
+            break;
+            
+        default:
+            break;
+    }
+    
+    if (strcmp(server, prefs_get_hostname()) != 0)
+    {
+        /* Currently this feature is disabled. */
+    }
+
+    /*禁止使用相对路径访问*/
+    if (strstr(object, "../")) 
+    {
+        send_reply(403, 0, rtsp);/* Forbidden */
+        return ERR_PARSE;
+    }
+    if (strstr(object, "./"))
+    {
+        send_reply(403, 0, rtsp);/* Forbidden */
+        return ERR_PARSE;
+    }
+
+    /*检查媒体类型的合法性*/
+    p = strrchr(object, '.');
+    valid_url = 0;
+    if (p == NULL) 
+    {
+        send_reply(415, 0, rtsp);/* Unsupported media type */
+        return ERR_PARSE;
+    } 
+    else 
+    {
+        valid_url = is_supported_url(p);
+    }
+    if (!valid_url) 
+    {
+        send_reply(415, 0, rtsp);/* Unsupported media type */
+        return ERR_PARSE;
+    }
+
+    /*处理会话*/
+    if ((p = strstr(rtsp->in_buffer, HDR_SESSION)) != NULL)  /**检查会话头*/
+    {
+        if (sscanf(p, "%254s %ld", trash, &session_id) != 2) 
+        {
+            send_reply(454, 0, rtsp);	/* Session Not Found */
+            return ERR_PARSE;
+            // return ERR_NOERROR;
+        }
+    } 
+    else 
+    {
+        session_id = -1;
+    }
+
+    /*会话列表*/
+    s = rtsp->session_list;
+    if (s == NULL) 
+    {
+        send_reply(415, 0, rtsp);
+        return ERR_GENERIC;
+    }
+    if (s->session_id != session_id)
+    {
+        send_reply(454, 0, rtsp); /* Session Not Found */
+        return ERR_PARSE;
+    }
+
+    /*发送回复*/
+    #ifdef RTSP_METHOD_LOG
+    fnc_log(FNC_LOG_INFO,"TEARDOWN %s RTSP/1.0 ",url);
+    #endif
+    
+    send_teardown_reply(rtsp, session_id, cseq);
+    
+    #ifdef RTSP_METHOD_LOG   
+    if ((p=strstr(rtsp->in_buffer, HDR_USER_AGENT))!=NULL) 
+    {
+        char cut[strlen(p)];
+        strcpy(cut,p);
+        p=strstr(cut, "\n");
+        cut[strlen(cut)-strlen(p)-1]='\0';
+        fnc_log(FNC_LOG_CLIENT,"%s\n",cut);
+    }
+    else
+        fnc_log(FNC_LOG_CLIENT,"- \n");
+
+    #endif    
+
+    /*Compatibility with RealOne and RealPlayer */
+    if (strchr(object, '!'))	
+        filename = strchr(object, '!') + 1;
+    else
+        filename = object;
+
+
+
+    /*释放所有的URI RTP会话*/
+    rtp_curr = s->rtp_session;
+    while (rtp_curr != NULL)
+    {
+        if (strcmp(rtp_curr->current_media->filename, filename) == 0
+            || strcmp(rtp_curr->current_media->aggregate, filename) == 0) 
+        {
+            rtp_temp = rtp_curr;
+            if (rtp_prev != NULL)
+                rtp_prev->next = rtp_curr->next;
+            else
+                s->rtp_session = rtp_curr->next;
+                
+            rtp_curr = rtp_curr->next;
+
+            schedule_remove(rtp_temp->sched_id);
+        } 
+        else
+        {
+        rtp_prev = rtp_curr;
+        rtp_curr = rtp_curr->next;
+        }
+    }
+
+    /*释放链表空间*/
+    if (s->rtp_session == NULL) 
+    {
+        free(rtsp->session_list);
+        rtsp->session_list = NULL;
+    }
+
+    return ERR_NOERROR;
+}
